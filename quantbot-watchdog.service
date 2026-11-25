@@ -1,0 +1,20 @@
+[Unit]
+Description=QuantBot Pro Memory Watchdog
+After=quantbot.service
+Requires=quantbot.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/quantbot
+Environment=PYTHONPATH=/opt/quantbot
+ExecStart=/opt/quantbot/venv/bin/python watchdog.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quantbot-watchdog
+
+[Install]
+WantedBy=multi-user.target

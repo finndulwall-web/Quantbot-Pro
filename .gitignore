@@ -1,0 +1,71 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.local
+.env.production.local
+
+# Logs
+*.log
+bot.log
+server.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data_cache.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model/ML files
+*.pkl
+*.joblib
+*.h5
+*.onnx
+
+# Backtest results
+backtest_result.png
+*.png
+
+# Data cache
+data_cache.db
+*.cache
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Render/Deployment
+.render/
+Dockerfile.render
+docker-compose.render.yml
+
+# Secrets
+*.pem
+*.key
+*.crt
+*.p12

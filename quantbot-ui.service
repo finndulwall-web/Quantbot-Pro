@@ -1,0 +1,27 @@
+[Unit]
+Description=QuantBot Pro Web UI
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantbot
+Group=quantbot
+WorkingDirectory=/opt/quantbot
+Environment=PYTHONPATH=/opt/quantbot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/quantbot/venv/bin/gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120 --access-logfile - --error-logfile - ui.app_enhanced:create_app
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quantbot-ui
+
+MemoryLimit=500M
+CPUQuota=20%
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

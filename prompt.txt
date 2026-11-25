@@ -1,0 +1,125 @@
+You are an elite quantitative developer, systems architect, and UI designer. I am giving you a massive, high-complexity project. 
+
+Context:
+- Location: Sri Lanka.
+- Capital: 50,000 LKR (approx $170 USD). This means risk management is critical. The bot must not blow the account. Position sizing must be calculated based on 1% risk per trade.
+- Markets: Crypto (via Binance/ccxt) and US Equities (via yfinance). 
+- Environment: A DEDICATED Linux/Windows laptop with ONLY 4GB of RAM. This machine is used for NOTHING ELSE. It is a dedicated server that will run 24/7 headlessly in the corner of the room.
+- Objective: Build a fully autonomous, self-improving, paper-trading bot with a lightweight web UI and Discord telemetry that operates as a system daemon.
+
+CRITICAL DIRECTIVE: Do not stop writing code, testing, and iterating until the backtest engine shows a proven edge and the system can be daemonized. If a library fails to install, find an alternative. Do not output placeholders. Write the complete, production-ready system.
+
+### SECTION 1: CORE ARCHITECTURE & MODULES
+The system must be modular. Do not put everything in one file. Create the following directory structure:
+- `main.py`: The entry point.
+- `config.json`: API keys, Discord webhook, trading parameters.
+- `requirements.txt`: Exact dependencies.
+- `core/data.py`: The data ingestion engine.
+- `core/indicators.py`: The technical analysis math.
+- `core/strategy.py`: The logic for buy/sell signals.
+- `core/llm_brain.py`: The NVIDIA API integration.
+- `core/backtest.py`: The historical simulation engine.
+- `core/risk.py`: Position sizing and portfolio management.
+- `ui/app.py`: The lightweight web interface.
+- `utils/logger.py`: Custom logging with color output.
+- `utils/notifier.py`: The Discord webhook handler.
+- `setup_daemon.sh`: Script to install the bot as a systemd service (or PM2).
+
+### SECTION 2: DATA INGESTION (core/data.py)
+1. Use `ccxt` for crypto data (Binance). Fetch 1-hour OHLCV data.
+2. Use `yfinance` for stocks. Fetch 1-hour data.
+3. Implement a caching layer (using `sqlite3`) so we don't hit rate limits and don't hold all historical data in RAM.
+4. Handle missing candles, API timeouts, and rate limits gracefully. If a fetch fails, retry 3 times with exponential backoff.
+5. Clean the data: remove NaNs, forward-fill missing volume, and ensure the index is a proper datetime object.
+
+### SECTION 3: TECHNICAL INDICATORS (core/indicators.py)
+Write pure Python/Pandas functions for the following. Do not use `TA-Lib`. Write the math from scratch.
+1. EMA (Exponential Moving Average) for 20, 50, and 200 periods.
+2. RSI (Relative Strength Index) for 14 periods.
+3. MACD (Moving Average Convergence Divergence) with 12, 26, 9.
+4. ATR (Average True Range) for 14 periods.
+5. Bollinger Bands (20 period, 2 standard deviations).
+6. VWAP (Volume Weighted Average Price) resetting daily.
+
+### SECTION 4: THE STRATEGY ENGINE (core/strategy.py)
+1. Define a "Signal" data class.
+2. Entry Logic (Long Only):
+   - Trigger A: RSI < 30 AND price is above EMA 200.
+   - Trigger B: MACD crosses above signal line AND price > EMA 50 AND volume is 1.5x the 20-period average.
+3. Exit Logic:
+   - Take Profit: 2x ATR.
+   - Stop Loss: 1x ATR.
+   - Trailing Stop: Once profit is > 1x ATR, move stop loss to breakeven.
+4. Add a "Market Regime" filter: If EMA 50 is below EMA 200, do not take long trades.
+
+### SECTION 5: RISK MANAGEMENT (core/risk.py)
+1. Account Balance: Start with 50,000 LKR (converted to USDT internally).
+2. Risk per trade: 1% of total portfolio value.
+3. Position Sizing Math: `Position Size = (Account Balance * 0.01) / (Entry Price - Stop Loss)`.
+4. Max concurrent trades: 3. Max portfolio heat: 3%.
+
+### SECTION 6: THE AI BRAIN (core/llm_brain.py)
+1. When a signal fires, collect the last 5 candles, current RSI, MACD, and ATR.
+2. Use the `openai` Python package, pointing to `base_url="https://integrate.api.nvidia.com/v1"`.
+3. Use the model `nvidia/nemotron-3-ultra-550b-a55b`.
+4. Prompt it: "You are a quant analyst. Here is the data: {data}. Write a 3-sentence thesis on why this is a good entry, and what the biggest risk is. Be concise and professional."
+5. Return the LLM text and attach it to the Signal.
+
+### SECTION 7: THE BACKTEST ENGINE (core/backtest.py)
+1. Takes a symbol, a timeframe, and a date range.
+2. Iterates through the data candle-by-candle.
+3. Simulates entries, exits, stop-losses, and take-profits. Include slippage (0.1%) and exchange fees (0.1%).
+4. Calculates: Total Return %, Win Rate %, Max Drawdown %, Sharpe Ratio, Total Trades.
+5. Output a summary table and a matplotlib chart showing the equity curve vs. Buy & Hold.
+
+### SECTION 8: THE SELF-IMPROVEMENT LOOP
+1. If the backtest Win Rate is < 55% or Max Drawdown > 10%, trigger an optimization loop.
+2. Write a Grid Search function that tests different RSI thresholds and EMA periods.
+3. Run the backtest for every combination.
+4. Save the best performing parameters to `config.json`.
+5. Run this loop up to 5 times until the strategy is profitable.
+
+### SECTION 9: THE DISCORD NOTIFIER (utils/notifier.py)
+1. Send a rich embed to a Discord Webhook URL.
+2. The embed must have:
+   - Title: 🚨 [BUY/SELL] [SYMBOL] @ [PRICE]
+   - Description: The LLM analysis text.
+   - Color: Green for buy, Red for sell.
+   - Fields: Stop Loss, Take Profit, Position Size, RSI, MACD.
+   - Image: A matplotlib chart of the last 50 candles with the entry/exit marked.
+
+### SECTION 10: THE LIGHTWEIGHT WEB UI (ui/app.py)
+CRITICAL: Do NOT use Streamlit or Dash. They are too heavy for 4GB RAM.
+1. Use `Flask` and `Jinja2` templates. It is infinitely lighter.
+2. Build a dark-themed, minimalist dashboard.
+3. Display: Total balance, daily P&L, and active trades.
+4. A section to view the last 20 lines of `bot.log`.
+5. A simple HTML form to change the symbol and risk percentage.
+6. Keep the HTML/CSS embedded in a single template file to reduce disk I/O.
+7. The UI should run on port 8080 in a separate thread or process.
+
+### SECTION 11: THE MAIN LOOP (main.py)
+1. Load the config.
+2. Initialize the logger to write to `bot.log` (with rotation to prevent filling the disk).
+3. If running in "Live/Paper" mode, loop every 15 minutes:
+   - Fetch the latest data (only the last 100 candles to save RAM).
+   - Check for signals.
+   - If a signal fires, call the LLM, calculate position size, send the Discord alert, and log to the file.
+4. Catch all exceptions in the loop so the daemon never dies.
+
+### SECTION 12: DEPLOYMENT & SETUP
+1. Include a `setup.sh` script that installs Python, pip, and the dependencies.
+2. Note that `numpy` and `pandas` are required but must be handled carefully.
+
+### SECTION 13: DEDICATED SERVER DAEMONIZATION (4GB RAM HEADLESS NODE)
+The laptop is a dedicated server. It will run with the lid closed in the corner. The code must reflect this.
+1. **Daemonization**: Provide a `systemd` service file (`quantbot.service`) or `pm2` configuration. The bot MUST start on boot and run in the background. It should not require a terminal window to stay open.
+2. **Memory Watchdog**: Write a separate script `watchdog.py` that runs alongside the main bot. It checks the RAM usage of `main.py`. If it exceeds 2.5GB, it kills and restarts the process.
+3. **Log Rotation**: The bot will run for months. The logger must rotate `bot.log` when it hits 10MB, keeping only the last 3 files so the laptop's disk doesn't fill up.
+4. **Extreme RAM Optimization**: 
+   - Call `gc.collect()` explicitly in the main loop.
+   - Use `float32` instead of `float64` in Pandas to save 50% memory.
+   - Do not load more than 100 candles into memory at any given time during live trading. 
+   - The Flask UI must run as a separate WSGI process (using `gunicorn` or `waitress`) so it doesn't block the trading loop.
+
+CRITICAL DIRECTIVE REMINDER: You are not done until the entire folder structure is generated, every file is complete, the backtest runs successfully without exceeding the memory limit, and the systemd service is ready to install. If you encounter an error during testing, read the error, fix the code, and try again. Begin.

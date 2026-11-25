@@ -1,0 +1,19 @@
+{"ts": "2026-11-23T14:46:07", "kind": "boot", "phase": "IDLE", "cycle": 0, "pid": 21490}
+{"ts": "2026-11-23T14:46:08", "kind": "db_backup", "phase": "IDLE", "cycle": 0}
+{"ts": "2026-11-23T14:46:08", "kind": "cycle_start", "phase": "IDLE", "cycle": 1}
+{"ts": "2026-11-23T14:46:09", "kind": "spawn_ok", "phase": "SPAWN", "cycle": 1, "attempt": 1}
+{"ts": "2026-11-23T14:51:07", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-23T14:51:11", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-23T14:51:12", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-23T14:51:15", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:15:53", "kind": "boot", "phase": "IDLE", "cycle": 0, "pid": 13364}
+{"ts": "2026-11-24T20:15:54", "kind": "cycle_start", "phase": "IDLE", "cycle": 1}
+{"ts": "2026-11-24T20:15:54", "kind": "spawn_ok", "phase": "SPAWN", "cycle": 1, "attempt": 1}
+{"ts": "2026-11-24T20:21:04", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:21:07", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:21:09", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:21:10", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:21:11", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:21:11", "kind": "signal", "phase": "SHUTDOWN", "cycle": 1, "sig": 2}
+{"ts": "2026-11-24T20:22:09", "kind": "cycle_teardown", "phase": "TEARDOWN", "cycle": 1, "limit": false}
+{"ts": "2026-11-24T20:22:09", "kind": "shutdown", "phase": "SHUTDOWN", "cycle": 1, "stats": "cycles=1 limit=0 clean=1 spawn_fail=0 ip_ok=0 ip_stale=0 inject_ok=0 inject_skip=0 circuit=0 uptime=00:06:15 last=374.5s phase=SHUTDOWN"}

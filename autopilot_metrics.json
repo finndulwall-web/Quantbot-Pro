@@ -1,0 +1,19 @@
+{
+  "cycles": 1,
+  "limit_hits": 0,
+  "clean_exits": 1,
+  "spawn_failures": 0,
+  "consecutive_spawn_fail": 0,
+  "ip_rotations": 0,
+  "ip_stale": 0,
+  "inject_ok": 0,
+  "inject_skip": 0,
+  "circuit_opens": 0,
+  "webhook_ok": 0,
+  "webhook_fail": 0,
+  "start_time": 686888.052804268,
+  "last_cycle_seconds": 374.5072051170282,
+  "phase": "SHUTDOWN",
+  "last_error": "",
+  "uptime_s": 375.7
+}

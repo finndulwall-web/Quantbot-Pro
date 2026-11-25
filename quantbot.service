@@ -1,0 +1,33 @@
+[Unit]
+Description=QuantBot Pro Trading Engine
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantbot
+Group=quantbot
+WorkingDirectory=/opt/quantbot
+Environment=PYTHONPATH=/opt/quantbot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/quantbot/venv/bin/python main.py --mode paper
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quantbot
+
+# Resource limits for 4GB RAM
+MemoryLimit=2500M
+MemorySwapMax=0
+CPUQuota=80%
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/quantbot/logs /opt/quantbot/data
+
+[Install]
+WantedBy=multi-user.target
