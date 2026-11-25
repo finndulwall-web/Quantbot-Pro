@@ -5,7 +5,7 @@ services:
     plan: free
     buildCommand: |
       pip install --upgrade pip
-      pip install -r requirements.txt
+      pip install -r requirements-render.txt
     startCommand: python main.py --mode paper --symbol BTC/USDT
     envVars:
       - key: PYTHON_VERSION
@@ -25,10 +25,6 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
 
-  - type: cron
-    name: quantbot-keepalive
-    schedule: "*/10 * * * *"
-    command: curl -f https://quantbot-pro.onrender.com/api/health || exit 1
-    envVars:
-      - key: TARGET_URL
-        value: https://quantbot-pro.onrender.com/api/health
+# Cron job removed from blueprint - add manually after deployment via Render Dashboard
+# Schedule: */10 * * * *
+# Command: curl -f https://YOUR_APP_NAME.onrender.com/api/health || exit 1
