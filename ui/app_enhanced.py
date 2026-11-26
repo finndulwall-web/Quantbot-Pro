@@ -2336,8 +2336,11 @@ class QuantBotUI:
                 'version': '1.0.0'
             })
 
-@self.app.route('/api/api_keys', methods=['POST'])
-        def api_keys():
+        @self.app.route('/api/api_keys', methods=['POST'])
+
+            def api_keys():
+
+
             data = request.get_json()
             self.config['webhook_url'] = data.get('webhook_url', '')
             self.config['nvidia_api_key'] = data.get('nvidia_api_key', '')

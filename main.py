@@ -18,7 +18,7 @@ from core.data import fetch_ohlcv
 from core.strategy import Strategy
 from core.risk_enhanced import AdvancedRiskManager
 from core.llm_brain import LLMBrain
-from core.backtest_enhanced import BacktestEngine, print_backtest_summary
+from core.backtest_enhanced import EnhancedBacktestEngine as BacktestEngine, print_backtest_summary
 from utils.notifier import DiscordNotifier
 
 # Load environment variables

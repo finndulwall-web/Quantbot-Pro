@@ -1,6 +1,7 @@
+from collections import defaultdict
 """
 Enhanced Backtesting Module
-Monte Carlo simulation, sensitivity analysis, regime-aware testing, and advanced visualization
+Monte Carlo simulation, walk-forward optimization, regime analysis, stress testing
 """
 import pandas as pd
 import numpy as np
@@ -8,17 +9,16 @@ import logging
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.gridspec import GridSpec
 from typing import Dict, List, Tuple, Optional, Any, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 import json
-from collections import defaultdict
 import pickle
 from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +46,14 @@ class BacktestResult:
     largest_loss: float = 0.0
     consecutive_wins: int = 0
     consecutive_losses: int = 0
-    avg_trade_duration: float = 0.0
     max_consecutive_wins: int = 0
     max_consecutive_losses: int = 0
+    avg_trade_duration: float = 0.0
     var_95: float = 0.0
     var_99: float = 0.0
     expected_shortfall: float = 0.0
     equity_curve_daily: List[float] = field(default_factory=list)
-    daily_returns: List[float] = field(default_factory=list)
+    daily_rets: List[float] = field(default_factory=list)
     monthly_returns: Dict[str, float] = field(default_factory=dict)
     drawdown_periods: List[dict] = field(default_factory=list)
     regime_performance: Dict[str, dict] = field(default_factory=dict)
@@ -86,15 +86,25 @@ class SensitivityResult:
     sensitivity_score: float
 
 
+@dataclass
+class WalkForwardResult:
+    windows: List[dict]
+    avg_return: float
+    avg_sharpe: float
+    avg_dd: float
+    consistency: float
+    params: dict
+
+
 class MonteCarloSimulator:
     """Monte Carlo simulation for strategy validation"""
     
     def __init__(self, config: dict):
         self.config = config
         self.n_simulations = config.get('mc_simulations', 200)
-        self.bootstrap_method = config.get('mc_method', 'bootstrap')  # 'bootstrap', 'parametric', 'block'
+        self.bootstrap_method = config.get('mc_method', 'bootstrap')
         self.block_size = config.get('mc_block_size', 20)
-        
+    
     def run(self, trades: List[dict], equity_curve: List[float], 
             initial_balance: float) -> MonteCarloResult:
         """Run Monte Carlo simulation on trade results"""
@@ -138,10 +148,7 @@ class MonteCarloSimulator:
         final_returns = np.array(final_returns)
         max_drawdowns = np.array(max_drawdowns)
         
-        # Probability of profit
         prob_profit = np.mean(final_returns > 0) * 100
-        
-        # Ruin probability (drawdown > 50%)
         ruin_prob = np.mean(np.array(max_drawdowns) > 50) * 100
         
         return MonteCarloResult(
@@ -155,7 +162,7 @@ class MonteCarloSimulator:
             percentile_5_dd=np.percentile(max_drawdowns, 5),
             percentile_95_dd=np.percentile(max_drawdowns, 95),
             ruin_probability=ruin_prob,
-            equity_curves=equity_curves[:10]  # Store first 10 for plotting
+            equity_curves=equity_curves[:10]
         )
     
     def _block_bootstrap(self, returns: List[float]) -> np.ndarray:
@@ -179,12 +186,7 @@ class MonteCarloSimulator:
         return np.random.normal(mean, std, len(returns))
     
     def _empty_result(self) -> MonteCarloResult:
-        return MonteCarloResult(
-            n_simulations=0, median_return=0, mean_return=0, std_return=0,
-            percentile_5=0, percentile_95=0, prob_profit=0,
-            percentile_5_dd=0, percentile_95_dd=0, ruin_probability=0,
-            equity_curves=[]
-        )
+        return MonteCarloResult(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [])
 
 
 class SensitivityAnalyzer:
@@ -193,7 +195,7 @@ class SensitivityAnalyzer:
     def __init__(self, config: dict):
         self.config = config
         self.n_points = config.get('sensitivity_points', 10)
-        
+    
     def analyze(self, engine, symbol: str, timeframe: str, start: str, end: str,
                 param_ranges: Dict[str, Tuple[float, float]]) -> Dict[str, SensitivityResult]:
         """Analyze sensitivity of each parameter"""
@@ -227,14 +229,12 @@ class SensitivityAnalyzer:
             drawdowns.append(result.max_drawdown)
             win_rates.append(result.win_rate)
         
-        # Find optimal value (max Sharpe)
         if sharpes:
             optimal_idx = np.argmax(sharpes)
             optimal_value = param_values[optimal_idx]
         else:
             optimal_value = param_values[len(param_values)//2]
         
-        # Sensitivity score: how much output changes relative to input change
         if len(returns) > 1:
             return_range = max(returns) - min(returns)
             param_range = max(param_values) - min(param_values)
@@ -263,7 +263,7 @@ class RegimeDetector:
         self.regimes = ['bull', 'bear', 'sideways', 'volatile', 'calm']
         self.current_regime = 'unknown'
         self.regime_history = []
-        
+    
     def detect(self, df: pd.DataFrame) -> str:
         """Detect current market regime"""
         if len(df) < self.lookback:
@@ -272,7 +272,7 @@ class RegimeDetector:
         recent = df.tail(self.lookback)
         close = recent['close']
         
-        # Trend strength
+        # Trend
         ema_50 = close.ewm(span=50).mean().iloc[-1]
         ema_200 = close.ewm(span=200).mean().iloc[-1]
         trend = 'bull' if ema_50 > ema_200 else 'bear'
@@ -293,7 +293,7 @@ class RegimeDetector:
         mom_20 = (close.iloc[-1] / close.iloc[-20] - 1) if len(close) > 20 else 0
         mom_60 = (close.iloc[-1] / close.iloc[-60] - 1) if len(close) > 60 else 0
         
-        # Determine regime
+        # Combine
         if trend == 'bull' and vol_regime == 'calm':
             regime = 'bull_trending'
         elif trend == 'bull' and vol_regime == 'volatile':
@@ -322,13 +322,11 @@ class RegimeDetector:
         if not hasattr(self, 'regime_history') or not self.regime_history:
             return {}
         
-        # This would need trade timestamps to match with regimes
-        # Simplified for now
         return {}
 
 
 class EnhancedBacktestEngine:
-    """Enhanced backtesting engine with Monte Carlo, sensitivity, and regime analysis"""
+    """Enhanced backtesting engine with Monte Carlo, walk-forward, sensitivity analysis"""
     
     def __init__(self, config: dict):
         self.config = config
@@ -341,12 +339,12 @@ class EnhancedBacktestEngine:
         self.regime_detector = RegimeDetector(config)
         
         # Slippage models
-        self.slippage_model = config.get('slippage_model', 'fixed')  # 'fixed', 'sqrt', 'linear', 'adaptive'
+        self.slippage_model = config.get('slippage_model', 'adaptive')
         self.slippage_base = config.get('slippage_pct', 0.001)
         self.fee = config.get('fee_pct', 0.001)
-        
+    
     def run(self, symbol: str, timeframe: str, start: str, end: str, 
-            params: Optional[dict] = None) -> 'BacktestResult':
+            params: Optional[dict] = None) -> BacktestResult:
         """Enhanced backtest with regime detection and detailed metrics"""
         from core.data import fetch_backtest_data
         from core.strategy import Strategy, Signal
@@ -357,13 +355,11 @@ class EnhancedBacktestEngine:
         if params:
             test_config.update(params)
         
-        # Fetch data
         df = fetch_backtest_data(symbol, timeframe, start, end)
         if df.empty:
             logger.error(f"No data for {symbol} backtest")
             return self._empty_result()
         
-        # Add enhanced indicators
         df = add_all_enhanced_indicators(df, test_config)
         df = df.dropna()
         
@@ -371,11 +367,6 @@ class EnhancedBacktestEngine:
             logger.error(f"Insufficient data after indicators: {len(df)} candles")
             return self._empty_result()
         
-        # Detect regimes
-        regime = self.regime_detector.detect(df)
-        logger.info(f"Detected market regime: {regime}")
-        
-        # Initialize
         strategy = Strategy(test_config)
         risk = AdvancedRiskManager(test_config)
         risk.portfolio = Portfolio(balance=test_config.get('capital_usdt', 170.0))
@@ -383,11 +374,8 @@ class EnhancedBacktestEngine:
         equity_curve = [risk.portfolio.balance]
         buy_hold_curve = [risk.portfolio.balance]
         timestamps = [df.index[0]]
-        daily_equity = {}
-        daily_returns = []
         initial_price = df['close'].iloc[0]
         
-        # Track regime performance
         regime_trades = defaultdict(list)
         
         for i in range(200, len(df)):
@@ -395,48 +383,35 @@ class EnhancedBacktestEngine:
             current_price = current_df['close'].iloc[-1]
             current_time = current_df.index[-1]
             
-            # Buy & hold
             buy_hold_value = risk.portfolio.balance * (current_price / initial_price)
+            buy_hold_curve.append(buy_hold_value)
             
-            # Detect regime for this period
+            # Detect regime
             regime = self.regime_detector.detect(current_df)
             
-            # Generate signal
             signal = strategy.generate_signal(current_df, symbol)
             
             if signal and len(risk.portfolio.positions) < test_config.get('max_concurrent_trades', 3):
-                can_open, size = risk.can_open_position(symbol, signal.price, signal.stop_loss)
+                can_open, size_or_reason = risk.can_open_position(symbol, signal.price, signal.stop_loss)
                 if can_open:
-                    signal.strategy_name = f"regime_{self.regime_detector.current_regime}"
-                    risk.open_position(signal, size)
-                # Update positions
+                    risk.open_position(signal, size_or_reason)
+            
             current_prices = {symbol: current_price}
             risk.update_trailing_stops(current_prices)
             closed = risk.check_exits(current_prices)
             
-            # Track regime performance
             for trade in closed:
-                regime_trades[self.regime_detector.current_regime].append(trade)
+                trade['regime'] = self.regime_detector.current_regime
+                regime_trades[regime].append(trade)
             
             equity = risk.get_equity(current_prices)
-            
-            # Daily tracking
-            date_key = current_time.date()
-            if date_key not in daily_equity:
-                daily_equity[date_key] = equity
-            else:
-                daily_equity[date_key] = equity
-            
             equity_curve.append(equity)
-            buy_hold_curve.append(buy_hold_value)
             timestamps.append(current_time)
         
-        # Calculate enhanced metrics
         metrics = risk.get_metrics()
         
         # Daily returns
-        daily_eq = pd.Series(daily_equity)
-        daily_eq.index = pd.to_datetime(daily_eq.index)
+        daily_eq = pd.Series(equity_curve, index=timestamps)
         daily_rets = daily_eq.pct_change().dropna()
         
         # Monthly returns
@@ -458,15 +433,14 @@ class EnhancedBacktestEngine:
                     'sharpe': np.mean(returns) / np.std(returns) * np.sqrt(252) if np.std(returns) > 0 else 0
                 }
         
-        # Monte Carlo simulation
+        # Monte Carlo
         mc_result = None
         if len(trades) >= 10:
             mc = MonteCarloSimulator(self.config)
-            mc_result = mc.run(risk.portfolio.trades_history, equity_curve, risk.initial_balance)
+            mc_result = mc.run(trades, equity_curve, risk.initial_balance)
         
-        # Calculate enhanced metrics
-        returns = [t['pnl_pct'] / 100 for t in trades]
-        daily_returns = daily_rets.tolist()
+        # Drawdown periods
+        drawdown_periods = self._calculate_drawdown_periods(equity_curve, timestamps)
         
         return BacktestResult(
             total_return=metrics['total_return'],
@@ -480,7 +454,7 @@ class EnhancedBacktestEngine:
             timestamps=timestamps,
             trades=risk.portfolio.trades_history,
             params=test_config,
-            # Enhanced
+            # Enhanced metrics
             sortino=metrics.get('sortino', 0),
             calmar=metrics.get('calmar', 0),
             expectancy=metrics.get('expectancy', 0),
@@ -490,16 +464,16 @@ class EnhancedBacktestEngine:
             largest_loss=metrics.get('largest_loss', 0),
             consecutive_wins=metrics.get('consecutive_wins', 0),
             consecutive_losses=metrics.get('consecutive_losses', 0),
-            avg_trade_duration=0,
             max_consecutive_wins=metrics.get('consecutive_wins', 0),
             max_consecutive_losses=metrics.get('consecutive_losses', 0),
-            var_95=np.percentile(daily_returns, 5) * 100 if len(daily_returns) > 0 else 0,
-            var_99=np.percentile(daily_returns, 1) * 100 if len(daily_returns) > 0 else 0,
-            expected_shortfall=np.mean([r for r in daily_returns if r < np.percentile(daily_returns, 5)]) * 100 if len(daily_returns) > 0 else 0,
-            equity_curve_daily=list(daily_equity.values()),
-            daily_returns=daily_returns,
+            avg_trade_duration=0,
+            var_95=np.percentile(daily_rets, 5) * 100 if len(daily_rets) > 0 else 0,
+            var_99=np.percentile(daily_rets, 1) * 100 if len(daily_rets) > 0 else 0,
+            expected_shortfall=np.mean([r for r in daily_rets if r < np.percentile(daily_rets, 5)]) * 100 if len(daily_rets) > 0 else 0,
+            equity_curve_daily=list(daily_eq.values),
+            daily_rets=daily_rets.tolist(),
             monthly_returns=monthly_rets.to_dict() if len(monthly_rets) > 0 else {},
-            drawdown_periods=self._calculate_drawdown_periods(equity_curve, timestamps),
+            drawdown_periods=drawdown_periods,
             regime_performance=regime_performance
         )
     
@@ -512,34 +486,33 @@ class EnhancedBacktestEngine:
         peak_idx = 0
         
         for i, (val, ts) in enumerate(zip(equity_curve, timestamps)):
-            if val < peak:
-                if not in_drawdown:
-                    in_drawdown = True
-                    dd_start = timestamps[peak_idx]
             if val > peak:
+                peak = val
+                peak_idx = i
                 if in_drawdown:
                     in_drawdown = False
-                    if dd_start is not None:
-                        # peak_idx is the index of the peak before the drawdown started
-                        trough_idx = peak_idx + equity_curve[peak_idx:i].index(min(equity_curve[peak_idx:i]))
+                    if dd_start is not None and peak_idx < i:
+                        trough_val = min(equity_curve[peak_idx:i])
                         periods.append({
                             'start': dd_start.isoformat(),
                             'end': timestamps[i-1].isoformat(),
                             'peak': peak,
-                            'trough': equity_curve[trough_idx],
-                            'max_dd_pct': (peak - equity_curve[trough_idx]) / peak * 100,
+                            'trough': trough_val,
+                            'max_dd_pct': (peak - trough_val) / peak * 100,
                             'duration_days': (ts - dd_start).days
                         })
                     dd_start = None
-                peak = val
-                peak_idx = i
+            elif val < peak:
+                if not in_drawdown:
+                    in_drawdown = True
+                    dd_start = timestamps[peak_idx]
         
-        return [p for p in periods if p['max_dd_pct'] > 1.0]  # Only significant drawdowns
+        return [p for p in periods if p['max_dd_pct'] > 1.0]
     
     def _empty_result(self):
         return BacktestResult(0, 0, 0, 0, 0, 0, [], [], [], [], {})
     
-    def grid_search(self, symbol: str, timeframe: str, start: str, end: str) -> Tuple[dict, 'BacktestResult']:
+    def grid_search(self, symbol: str, timeframe: str, start: str, end: str) -> Tuple[dict, BacktestResult]:
         """Enhanced grid search with more parameters"""
         param_grid = {
             'rsi_oversold': [20, 25, 30, 35],
@@ -559,7 +532,7 @@ class EnhancedBacktestEngine:
             'min_confidence': [0.5, 0.6, 0.7],
         }
         
-        # Use random search for efficiency (random subset of combinations)
+        # Random search for efficiency
         n_iterations = self.config.get('grid_search_iterations', 50)
         
         best_result = None
@@ -576,13 +549,12 @@ class EnhancedBacktestEngine:
             if not (params['ema_short'] < params['ema_medium'] < params['ema_long']):
                 continue
             
-            logger.info(f"Random search {i+1}/{n_iterations}: {params}")
+            logger.info(f"Grid search {i+1}/{n_iterations}: {params}")
             result = self.run(symbol, timeframe, start, end, params)
             
             if result.total_trades < 10:
                 continue
             
-            # Multi-objective score
             score = (result.win_rate * 0.3 + 
                      (100 - result.max_drawdown) * 0.25 + 
                      result.sharpe * 10 * 0.25 +
@@ -599,15 +571,40 @@ class EnhancedBacktestEngine:
         
         return best_params, best_result
     
-    def sensitivity_analysis(self, engine, symbol: str, timeframe: str, start: str, end: str,
-                            param_ranges: Dict[str, Tuple[float, float]]) -> Dict[str, SensitivityResult]:
-        """Run sensitivity analysis on key parameters"""
-        return self.sensitivity_analyzer.analyze(engine, symbol, timeframe, start, end, param_ranges)
+    def optimize_loop(self, symbol: str, timeframe: str, start: str, end: str) -> dict:
+        current_config = self.config.copy()
+        max_iterations = self.config.get('max_opt_iterations', 5)
+        
+        for iteration in range(max_iterations):
+            logger.info(f"=== Optimization Iteration {iteration + 1}/{max_iterations} ===")
+            
+            result = self.run(symbol, timeframe, start, end, current_config)
+            
+            logger.info(f"Current: WR={result.win_rate:.1f}% DD={result.max_drawdown:.2f}% Trades={result.total_trades}")
+            
+            if result.win_rate >= self.config.get('min_win_rate', 55) and \
+               result.max_drawdown <= self.config.get('max_drawdown', 10) and \
+               result.total_trades >= 10:
+                logger.info("Strategy meets criteria. Stopping optimization.")
+                break
+            
+            if iteration < max_iterations - 1:
+                logger.info("Running grid search for better parameters...")
+                best_params, best_result = self.grid_search(symbol, timeframe, start, end)
+                
+                if best_params and best_result.total_trades >= 10:
+                    current_config.update(best_params)
+                    logger.info(f"Updated config with: {best_params}")
+                else:
+                    logger.info("No better parameters found. Stopping.")
+                    break
+        
+        return current_config
     
     def walk_forward_optimize(self, symbol: str, timeframe: str, start: str, end: str,
                               train_window: int = 90, test_window: int = 30, 
                               step: int = 30) -> WalkForwardResult:
-        """Enhanced walk-forward with regime-aware validation"""
+        """Walk-forward optimization"""
         from datetime import datetime, timedelta
         
         start_dt = pd.Timestamp(start)
@@ -637,7 +634,7 @@ class EnhancedBacktestEngine:
             
             if best_params:
                 test_result = self.run(
-                    symbol, timeframe,
+                    symbol, timeframe, 
                     test_start.strftime('%Y-%m-%d'),
                     test_end.strftime('%Y-%m-%d'),
                     best_params
@@ -685,29 +682,26 @@ class EnhancedBacktestEngine:
             params=avg_params
         )
     
-    def run_monte_carlo(self, result: 'BacktestResult', n_simulations: int = 500) -> MonteCarloResult:
+    def run_monte_carlo(self, result: BacktestResult, n_simulations: int = 500) -> MonteCarloResult:
         """Run Monte Carlo simulation on backtest results"""
         mc = MonteCarloSimulator(self.config)
         mc.n_simulations = n_simulations
         return mc.run(result.trades, result.equity_curve, self.config.get('capital_usdt', 170.0))
     
-    def plot_enhanced_results(self, result: 'BacktestResult', symbol: str, 
-                              mc_result: Optional[MonteCarloResult] = None,
-                              save_path: str = "backtest_enhanced.png"):
+    def sensitivity_analysis(self, engine, symbol: str, timeframe: str, start: str, end: str,
+                            param_ranges: Dict[str, Tuple[float, float]]) -> Dict[str, SensitivityResult]:
+        """Run sensitivity analysis on key parameters"""
+        return self.sensitivity_analyzer.analyze(engine, symbol, timeframe, start, end, param_ranges)
+    
+    def plot_results(self, result: BacktestResult, symbol: str, save_path: str = "backtest_enhanced.png"):
         """Create comprehensive backtest visualization"""
         fig = plt.figure(figsize=(16, 14))
-        gs = GridSpec(5, 2, figure=fig, hspace=0.3, wspace=0.3)
+        gs = plt.GridSpec(5, 2, figure=fig, hspace=0.3, wspace=0.3)
         
         # 1. Equity Curve with MC envelopes
-        ax1 = fig.add_subplot(gs[0, :])
+        ax1 = plt.subplot(gs[0, :])
         ax1.plot(result.timestamps, result.equity_curve, label='Strategy', color='#00ff88', linewidth=1.5)
         ax1.plot(result.timestamps, result.buy_hold_curve, label='Buy & Hold', color='#ffaa00', linewidth=1, alpha=0.7)
-        
-        if mc_result and mc_result.equity_curves:
-            for i, eq_curve in enumerate(mc_result.equity_curves[:20]):
-                alpha = 0.05 if i > 0 else 0.15
-                ax1.plot(result.timestamps[:len(eq_curve)], eq_curve, color='#00ff88', alpha=alpha, linewidth=0.5)
-        
         ax1.set_title(f'{symbol} Backtest Equity Curve', color='white', fontsize=14)
         ax1.set_ylabel('Equity (USDT)', color='white')
         ax1.legend(facecolor='#1a1a2e', edgecolor='#00ff88', labelcolor='white')
@@ -715,14 +709,20 @@ class EnhancedBacktestEngine:
         ax1.set_facecolor('#0d0d1a')
         ax1.tick_params(colors='white')
         
+        # Trade markers
+        for trade in result.trades:
+            color = '#00ff88' if trade['pnl'] > 0 else '#ff3366'
+            ax1.scatter(trade['exit_time'], trade['entry_price'] * (1 + trade['pnl_pct']/100), 
+                       color=color, s=30, alpha=0.7, zorder=5)
+        
         # 2. Drawdown
-        ax2 = fig.add_subplot(gs[1, 0])
         dd_curve = []
         peak = result.equity_curve[0]
         for val in result.equity_curve:
             peak = max(peak, val)
             dd_curve.append((peak - val) / peak * 100)
         
+        ax2 = plt.subplot(gs[1, 0])
         ax2.fill_between(result.timestamps, dd_curve, 0, color='#ff3366', alpha=0.3)
         ax2.plot(result.timestamps, dd_curve, color='#ff3366', linewidth=1)
         ax2.set_title('Drawdown %', color='white')
@@ -731,93 +731,144 @@ class EnhancedBacktestEngine:
         ax2.set_facecolor('#0d0d1a')
         ax2.tick_params(colors='white')
         
-        # 3. Monthly Returns Heatmap
+        # Trade markers on drawdown
+        for trade in result.trades:
+            color = '#00ff88' if trade['pnl'] > 0 else '#ff3366'
+            ax2.scatter(trade['exit_time'], (trade['entry_price'] * (1 + trade['pnl_pct']/100) - trade['entry_price']) / trade['entry_price'] * 100, 
+                       color=color, s=20, alpha=0.7, zorder=5)
+        
+        # 3. Monthly returns
+        if hasattr(result, 'monthly_returns') and result.monthly_returns:
+            ax3 = plt.subplot(gs[1, 1])
+            months = list(result.monthly_returns.keys())
+            returns = list(result.monthly_returns.values())
+            colors = ['#00ff88' if r > 0 else '#ff3366' for r in returns]
+            ax3.bar(range(len(months)), returns, color=colors, alpha=0.7)
+            ax3.set_title('Monthly Returns %', color='white')
+            ax3.set_ylabel('Return %', color='white')
+            ax3.grid(True, alpha=0.3)
+            ax3.set_facecolor('#0d0d1a')
+            ax3.tick_params(colors='white')
+            ax3.set_xticks(range(len(months)))
+            ax3.set_xticklabels([m[:3] for m in months], rotation=45)
+        
+        # 3. Drawdown periods
+        dd_curve = []
+        peak = result.equity_curve[0]
+        for val in result.equity_curve:
+            peak = max(peak, val)
+            dd_curve.append((peak - val) / peak * 100)
+        
+        ax2 = plt.subplot(gs[1, 0])
+        ax2.fill_between(result.timestamps, dd_curve, 0, color='#ff3366', alpha=0.3)
+        ax2.plot(result.timestamps, dd_curve, color='#ff3366', linewidth=1)
+        ax2.set_title('Drawdown %', color='white')
+        ax2.set_ylabel('Drawdown %', color='white')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_facecolor('#0d0d1a')
+        ax2.tick_params(colors='white')
+        
+        # 3. Monthly returns
         ax3 = fig.add_subplot(gs[1, 1])
         if result.monthly_returns:
             months = list(result.monthly_returns.keys())
             returns = list(result.monthly_returns.values())
             colors = ['#00ff88' if r > 0 else '#ff3366' for r in returns]
             ax3.bar(range(len(months)), returns, color=colors, alpha=0.8)
-            ax3.set_xticks(range(len(months)))
-            ax3.set_xticklabels([m[:3] for m in months], rotation=45)
             ax3.set_title('Monthly Returns %', color='white')
             ax3.set_ylabel('Return %', color='white')
             ax3.grid(True, alpha=0.3)
             ax3.set_facecolor('#0d0d1a')
             ax3.tick_params(colors='white')
+            ax3.set_xticks(range(len(months)))
+            ax3.set_xticklabels([m[:3] for m in months], rotation=45)
         
-        # 4. Trade Distribution
+        # 4. Trade distribution
         ax4 = fig.add_subplot(gs[2, 0])
         if result.trades:
-            returns_pct = [t['pnl_pct'] for t in result.trades]
-            ax4.hist(returns_pct, bins=30, color='#00ff88', alpha=0.7, edgecolor='#0d0d1a')
-            ax3.axvline(x=0, color='white', linestyle='--', alpha=0.5)
+            returns = [t['pnl_pct'] for t in result.trades]
+            ax4.hist(returns, bins=20, color='#00ff88', alpha=0.7, edgecolor='#0d0d1a')
+            ax4.axvline(x=0, color='white', linestyle='--', alpha=0.5)
             ax4.set_title('Trade Return Distribution', color='white')
             ax4.set_xlabel('Return %', color='white')
             ax4.set_ylabel('Frequency', color='white')
+            ax4.grid(True, alpha=0.3)
             ax4.set_facecolor('#0d0d1a')
             ax4.tick_params(colors='white')
         
-        # 5. Monthly Returns
-        ax5 = fig.add_subplot(gs[2, 1])
-        if result.monthly_returns:
-            months = list(result.monthly_returns.keys())
-            returns = list(result.monthly_returns.values())
-            colors = ['#00ff88' if r > 0 else '#ff3366' for r in returns]
-            ax5.bar(range(len(months)), returns, color=colors, alpha=0.8)
-            ax5.set_xticks(range(len(months)))
-            ax5.set_xticklabels([m[:3] for m in months], rotation=45)
-            ax5.set_title('Monthly Returns %', color='white')
-            ax5.set_facecolor('#0d0d1a')
-            ax5.tick_params(colors='white')
-        
-        # 5. Drawdown Periods
-        ax6 = fig.add_subplot(gs[3, 0])
+        # 4. Drawdown periods
         if result.drawdown_periods:
+            ax4 = fig.add_subplot(gs[2, 1])
             dd_starts = [pd.Timestamp(p['start']) for p in result.drawdown_periods]
-            dd_magnitudes = [p['max_dd_pct'] for p in result.drawdown_periods]
+            dd_mags = [p['max_dd_pct'] for p in result.drawdown_periods]
             durations = [p['duration_days'] for p in result.drawdown_periods]
-            scatter = ax6.scatter(dd_starts, dd_magnitudes, s=[d*10 for d in durations], 
-                                 c=durations, cmap='Reds', alpha=0.7, edgecolors='white')
-            ax6.set_title('Drawdown Periods', color='white')
-            ax6.set_ylabel('Max DD %', color='white')
-            ax6.set_facecolor('#0d0d1a')
-            ax6.tick_params(colors='white')
-            plt.colorbar(scatter, ax=ax6, label='Duration (days)')
+            ax4.scatter(dd_starts, dd_mags, s=[d*10 for d in durations], 
+                       c=durations, cmap='Reds', alpha=0.7, edgecolors='white')
+            ax4.set_title('Drawdown Periods', color='white')
+            ax4.set_ylabel('Drawdown %', color='white')
+            ax4.set_facecolor('#0d0d1a')
+            ax4.tick_params(colors='white')
+            ax4.grid(True, alpha=0.2)
         
-        # 6. Regime Performance
-        ax7 = fig.add_subplot(gs[3, 1])
+        # 5. Regime performance
+        ax6 = fig.add_subplot(gs[3, 0])
         if result.regime_performance:
             regimes = list(result.regime_performance.keys())
             returns = [result.regime_performance[r]['total_return'] for r in regimes]
             trades = [result.regime_performance[r]['trades'] for r in regimes]
             colors = ['#00ff88' if r > 0 else '#ff3366' for r in returns]
-            ax7.bar(regimes, returns, color=colors, alpha=0.8)
-            ax7.set_title('Performance by Regime', color='white')
-            ax7.set_ylabel('Return %', color='white')
-            ax7.set_facecolor('#0d0d1a')
-            ax7.tick_params(colors='white')
+            ax6.bar(regimes, returns, color=colors, alpha=0.8)
+            ax6.set_title('Performance by Regime', color='white')
+            ax6.set_ylabel('Return %', color='white')
+            ax6.grid(True, alpha=0.3)
+            ax6.set_facecolor('#0d0d1a')
+            ax6.tick_params(colors='white')
             for i, (r, t) in enumerate(zip(regimes, trades)):
-                ax7.text(i, returns[i] + (2 if returns[i] > 0 else -5), f'{t} trades', 
+                ax6.text(i, returns[i] + (2 if returns[i] > 0 else -5), f'{t} trades', 
                         ha='center', color='white', fontsize=8)
         
-        # 7. Monte Carlo Distribution
+        # 6. Trade distribution
+        ax7 = fig.add_subplot(gs[3, 1])
+        if result.trades:
+            returns = [t['pnl_pct'] for t in result.trades]
+            ax7.hist(returns, bins=20, color='#00ff88', alpha=0.7, edgecolor='#0d0d1a')
+            ax7.axvline(x=0, color='white', linestyle='--', alpha=0.5)
+            ax7.set_title('Trade Return Distribution', color='white')
+            ax7.set_xlabel('Return %', color='white')
+            ax7.set_ylabel('Frequency', color='white')
+            ax7.grid(True, alpha=0.3)
+            ax7.set_facecolor('#0d0d1a')
+            ax7.tick_params(colors='white')
+        
+        # 7. Rolling metrics
         ax8 = fig.add_subplot(gs[4, :])
-        # (Monte Carlo equity curves would be plotted here if mc_result provided)
-        ax8.text(0.5, 0.5, 'Monte Carlo Distribution\n(Run mc_simulation to populate)', 
-                ha='center', va='center', color='white', fontsize=12)
-        ax8.set_facecolor('#0d0d1a')
+        if result.trades:
+            returns = [t['pnl_pct'] for t in result.trades]
+            window = min(30, len(returns))
+            rolling_sharpe = pd.Series(returns).rolling(window).apply(
+                lambda x: np.mean(x) / np.std(x) * np.sqrt(252) if np.std(x) > 0 else 0
+            )
+            rolling_wr = pd.Series([1 if r > 0 else 0 for r in returns]).rolling(window).mean() * 100
+            
+            ax8.plot(rolling_sharpe, label='Rolling Sharpe (30)', color='#00ff88', linewidth=1.5)
+            ax8_twin = ax8.twinx()
+            ax8_twin.plot(rolling_wr, label='Rolling Win Rate (30)', color='#00aaff', linewidth=1.5)
+            ax8.set_title('Rolling Metrics (30-trade window)', color='white')
+            ax8.set_ylabel('Sharpe', color='#00ff88')
+            ax8_twin.set_ylabel('Win Rate %', color='#00aaff')
+            ax8.grid(True, alpha=0.3)
+            ax8.set_facecolor('#0d0d1a')
+            ax8.tick_params(colors='white')
+            ax8_twin.tick_params(colors='white')
+            ax8.legend(loc='upper left')
+            ax8_twin.legend(loc='upper right')
         
         fig.patch.set_facecolor('#0d0d1a')
-        plt.suptitle(f'{symbol} Enhanced Backtest Results', color='white', fontsize=16)
         plt.tight_layout()
-        plt.savefig(save_path, dpi=150, facecolor='#0d0d1a', edgecolor='none', bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, facecolor='#0d0d1a', edgecolor='none')
         plt.close()
         
         logger.info(f"Enhanced backtest chart saved to {save_path}")
-    
-    def _empty_result(self):
-        return BacktestResult(0, 0, 0, 0, 0, 0, [], [], [], [], {})
 
 
 def print_backtest_summary(result: BacktestResult):
@@ -881,12 +932,25 @@ def print_walkforward_summary(result: WalkForwardResult):
     print("="*60)
     print(f"Windows Tested:     {len(result.windows)}")
     print(f"Avg Test Return:    {result.avg_return:.2f}%")
-    print(f"Avg Test Sharpe:    {result.avg_sharpe:.2f}")
-    print(f"Avg Test DD:        {result.avg_dd:.2f}%")
-    print(f"Consistency:        {result.consistency:.1f}%")
+    print(f"Avg Sharpe:         {result.avg_sharpe:.2f}")
+    print(f"Avg DD:             {result.avg_dd:.2f}%")
+    print(f"Consistency:        {result.consistency:.1f}% (profitable windows)")
     print(f"Optimized Params:   {result.params}")
     print("\nPer-Window Results:")
     for w in result.windows:
         tr = w['test_result']
         print(f"  W{w['window']}: Return={tr.total_return:.2f}% WR={tr.win_rate:.1f}% DD={tr.max_drawdown:.2f}% Sharpe={tr.sharpe:.2f}")
     print("="*60 + "\n")
+
+
+class WalkForwardResult:
+    """Walk-forward optimization results"""
+    def __init__(self, windows: List[dict], avg_return: float, avg_sharpe: float, 
+                 avg_dd: float, consistency: float, params: dict):
+        self.windows = windows
+        self.avg_return = avg_return
+        self.avg_sharpe = avg_sharpe
+        self.avg_dd = avg_dd
+        self.consistency = consistency
+        self.params = params
+
